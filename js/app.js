@@ -62,21 +62,38 @@ let currentName = null;
 
 /* ---------- Storage helpers (self-hosted, no Claude dependency) ---------- */
 async function loadItems(){
+  if(saveInFlight) await saveInFlight; // never read while a save is still landing
+
   try{
     const res = await fetch(FIREBASE_DB_URL + '/' + DB_PATH + '.json?_=' + Date.now(), { cache: 'no-store' });
     if(!res.ok) throw new Error('Database request failed: ' + res.status);
     const data = await res.json();
+
     if(data){
       const result = patchKnownItems(data);
       items = result.items;
-      if(result.changed) await saveItems();
+      if(result.changed) saveItems();
       return;
+    }
+
+    // A successful request that genuinely returned nothing means the database
+    // is truly empty, i.e. this is the very first time the app has ever run.
+    // Only in this specific case is it safe to seed it with the starting list.
+    if(items.length === 0){
+      items = defaultItems();
+      await saveItems();
     }
   }catch(e){
     console.error('Could not load inventory', e);
+    // A network hiccup or failed request must NEVER cause real, already-saved
+    // data to be overwritten with the starting defaults. Keep whatever is
+    // already in memory. Only fall back to showing defaults locally (without
+    // saving them anywhere) if this is the very first load and it failed
+    // before anything was ever loaded.
+    if(items.length === 0){
+      items = defaultItems();
+    }
   }
-  items = defaultItems();
-  await saveItems();
 }
 
 /* Items that used to be tracked but are no longer needed. Listed here (rather than just
@@ -139,7 +156,16 @@ function showToast(msg){
   setTimeout(() => toast.classList.remove('show'), 2200);
 }
 
-async function saveItems(){
+let saveInFlight = null;
+
+function saveItems(){
+  const task = doSave();
+  saveInFlight = task;
+  task.finally(() => { if(saveInFlight === task) saveInFlight = null; });
+  return task;
+}
+
+async function doSave(){
   const maxAttempts = 5;
   for(let attempt = 1; attempt <= maxAttempts; attempt++){
     try{
