@@ -60,7 +60,26 @@ let items = [];
 let activeCategory = 'All';
 let currentName = null;
 
-/* ---------- Storage helpers (self-hosted, no Claude dependency) ---------- */
+/* ---------- Storage helpers (self-hosted, no Claude dependency) ----------
+   IMPORTANT: each item lives at its own address in Firebase, e.g.
+   /inventory/fresubin-packs.json — never as one big combined block.
+   This is what keeps two PAs on two different devices from ever
+   overwriting each other's edits: each device only ever writes the one
+   item it actually changed, so it can't accidentally erase someone
+   else's edit to a *different* item made moments earlier. */
+
+let saveInFlight = null;
+
+function itemsArrayToObject(arr){
+  const obj = {};
+  arr.forEach(it => { obj[it.id] = it; });
+  return obj;
+}
+
+function objectToItemsArray(obj){
+  return Object.keys(obj).map(k => obj[k]);
+}
+
 async function loadItems(){
   if(saveInFlight) await saveInFlight; // never read while a save is still landing
 
@@ -70,35 +89,43 @@ async function loadItems(){
     const data = await res.json();
 
     if(data){
-      const result = patchKnownItems(data);
-      items = result.items;
-      if(result.changed) saveItems();
+      // Older versions of this app stored everything as one big array at
+      // this address. If that old shape is ever found, convert it to the
+      // new per-item shape once, so everything going forward is safe.
+      const wasOldArrayFormat = Array.isArray(data);
+      const loadedArray = wasOldArrayFormat ? data : objectToItemsArray(data);
+
+      const patch = patchKnownItems(loadedArray);
+      items = patch.items;
+
+      if(wasOldArrayFormat || patch.structureChanged){
+        // A one-off structural moment (first migration, or an app update
+        // that renamed/added/removed items), not a routine quantity edit,
+        // so a single combined write here is fine and expected.
+        saveAllItems();
+      }
       return;
     }
 
     // A successful request that genuinely returned nothing means the database
     // is truly empty, i.e. this is the very first time the app has ever run.
-    // Only in this specific case is it safe to seed it with the starting list.
     if(items.length === 0){
       items = defaultItems();
-      await saveItems();
+      await saveAllItems();
     }
   }catch(e){
     console.error('Could not load inventory', e);
-    // A network hiccup or failed request must NEVER cause real, already-saved
-    // data to be overwritten with the starting defaults. Keep whatever is
-    // already in memory. Only fall back to showing defaults locally (without
-    // saving them anywhere) if this is the very first load and it failed
-    // before anything was ever loaded.
+    // A network hiccup must NEVER cause real, already-saved data to be
+    // overwritten with the starting defaults. Keep whatever is already in
+    // memory. Only show local defaults (without saving them anywhere) if
+    // this is the very first load and it failed before anything ever loaded.
     if(items.length === 0){
       items = defaultItems();
     }
   }
 }
 
-/* Items that used to be tracked but are no longer needed. Listed here (rather than just
-   removed from defaultItems) so that copies already saved in the shared database get
-   cleaned up too, not just new ones prevented. */
+/* Items that used to be tracked but are no longer needed. */
 const DISCONTINUED_IDS = [
   'sterile-water-ndash-aqua-b-braun',
   'universal-reiniger',
@@ -114,11 +141,11 @@ function patchKnownItems(loadedItems){
   const defaults = defaultItems();
   const byId = {};
   defaults.forEach(d => byId[d.id] = d);
-  let changed = false;
+  let structureChanged = false;
 
   let result = loadedItems.filter(it => {
     if(DISCONTINUED_IDS.includes(it.id)){
-      changed = true;
+      structureChanged = true;
       return false;
     }
     return true;
@@ -130,7 +157,7 @@ function patchKnownItems(loadedItems){
     ['name','category','unitLabel','mode','cartonSize','packSize','packUnitLabel','min','parLevel','critical','note'].forEach(field => {
       if(d[field] !== undefined && JSON.stringify(it[field]) !== JSON.stringify(d[field])){
         it[field] = d[field];
-        changed = true;
+        structureChanged = true;
       }
     });
   });
@@ -139,11 +166,11 @@ function patchKnownItems(loadedItems){
   defaults.forEach(d => {
     if(!existingIds.has(d.id)){
       result.push(d);
-      changed = true;
+      structureChanged = true;
     }
   });
 
-  return {items: result, changed};
+  return {items: result, structureChanged};
 }
 
 /* Quiet, non-blocking notification, used instead of alert() so nothing ever interrupts
@@ -156,34 +183,72 @@ function showToast(msg){
   setTimeout(() => toast.classList.remove('show'), 2200);
 }
 
-let saveInFlight = null;
-
-function saveItems(){
-  const task = doSave();
+/* Save just ONE item — this is what every everyday stock update uses,
+   so two devices editing two different items can never collide. */
+function saveItem(item){
+  const task = doSaveItem(item);
   saveInFlight = task;
   task.finally(() => { if(saveInFlight === task) saveInFlight = null; });
   return task;
 }
 
-async function doSave(){
+async function doSaveItem(item){
+  const maxAttempts = 5;
+  for(let attempt = 1; attempt <= maxAttempts; attempt++){
+    try{
+      const res = await fetch(FIREBASE_DB_URL + '/' + DB_PATH + '/' + encodeURIComponent(item.id) + '.json', {
+        method: 'PUT',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify(item),
+        cache: 'no-store'
+      });
+      if(!res.ok) throw new Error('Database write failed: ' + res.status);
+      return;
+    }catch(e){
+      console.error('Could not save item (attempt ' + attempt + ')', e);
+      if(attempt < maxAttempts) await new Promise(r => setTimeout(r, 500 * attempt));
+    }
+  }
+}
+
+/* Delete one item's own node entirely (used for discontinued items). */
+async function deleteItemRemote(id){
+  try{
+    await fetch(FIREBASE_DB_URL + '/' + DB_PATH + '/' + encodeURIComponent(id) + '.json', {
+      method: 'DELETE',
+      cache: 'no-store'
+    });
+  }catch(e){
+    console.error('Could not delete item', id, e);
+  }
+}
+
+/* Save the WHOLE list at once. Only used for rare structural moments: the
+   very first run, migrating old data, or an app update that renamed, added,
+   or removed items. Never used for routine day-to-day quantity edits. */
+function saveAllItems(){
+  const task = doSaveAll();
+  saveInFlight = task;
+  task.finally(() => { if(saveInFlight === task) saveInFlight = null; });
+  return task;
+}
+
+async function doSaveAll(){
+  await Promise.all(DISCONTINUED_IDS.map(id => deleteItemRemote(id)));
   const maxAttempts = 5;
   for(let attempt = 1; attempt <= maxAttempts; attempt++){
     try{
       const res = await fetch(FIREBASE_DB_URL + '/' + DB_PATH + '.json', {
         method: 'PUT',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(items),
+        body: JSON.stringify(itemsArrayToObject(items)),
         cache: 'no-store'
       });
       if(!res.ok) throw new Error('Database write failed: ' + res.status);
       return;
     }catch(e){
       console.error('Could not save inventory (attempt ' + attempt + ')', e);
-      if(attempt < maxAttempts){
-        await new Promise(r => setTimeout(r, 500 * attempt));
-      }
-      // No message shown even after all attempts fail; the next background
-      // sync or the next edit will quietly try saving again.
+      if(attempt < maxAttempts) await new Promise(r => setTimeout(r, 500 * attempt));
     }
   }
 }
@@ -396,8 +461,8 @@ async function saveSheet(name){
   renderList();
   if(document.getElementById('summaryView').style.display !== 'none') renderSummary();
 
-  // Save quietly in the background.
-  saveItems();
+  // Save quietly in the background — just this one item, not the whole list.
+  saveItem(item);
 }
 
 /* ---------- Who is updating (session only) ---------- */
@@ -633,17 +698,18 @@ function openAddSheet(){
       nameField.focus();
       return;
     }
-    items.push({
+    const newItem = {
       id: name.toLowerCase().replace(/[^a-z0-9]+/g,'-'),
       name, category, unitLabel: unit, mode:'simple',
       qty, min, critical:false, note:'', updatedAt: Date.now(), updatedBy: getWho()
-    });
+    };
+    items.push(newItem);
 
     // Update the screen immediately, save in the background.
     closeSheet();
     renderChips();
     renderList();
-    saveItems();
+    saveItem(newItem);
   };
 }
 
