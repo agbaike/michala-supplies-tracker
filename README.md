@@ -31,7 +31,7 @@ Live demo: https://agbaike.github.io/michala-supplies-tracker/
 │   └── app.js                        # All application logic
 ├── config/
 │   ├── firebase.config.example.js    # Template — copy this file
-│   └── firebase.config.js            # Your real config (gitignored, not in source control)
+│   └── firebase.config.js            # Your real config, committed (see "A note on data security" below)
 ├── .gitignore
 ├── LICENSE
 └── README.md
@@ -65,10 +65,13 @@ so on.
 
 This is a client-only static site with no backend server, so the Firebase
 database URL is necessarily visible to anyone who views the page's source,
-regardless of .gitignore, since that's just how static sites work. The
-.gitignore entry keeps the real URL out of the git history and off public
-repository browsing, which is good practice, but it is not a substitute for
-real access control.
+since that's just how static sites work. `config/firebase.config.js` is
+committed to this repo (this project has no build step or deploy pipeline,
+so GitHub Pages serves whatever is in the repo directly — a gitignored file
+would simply 404 on the live site and silently break saving). Since the URL
+is already visible in the page source to anyone with the link, committing it
+does not meaningfully add exposure, but it is not a substitute for real
+access control.
 
 By default the Firebase Realtime Database rules in this project are set to
 open read/write, which is a reasonable starting point for a small, trusted

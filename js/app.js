@@ -1,7 +1,6 @@
 /* ---------- Data model ---------- */
 /* Config (FIREBASE_DB_URL, DB_PATH) comes from config/firebase.config.js,
    loaded as a separate <script> before this file in index.html. */
-const STORAGE_KEY = 'inventory-items-v3';
 
 function defaultItems(){
   const mk = (o) => {
@@ -208,12 +207,13 @@ async function doSaveItem(item){
         cache: 'no-store'
       });
       if(!res.ok) throw new Error('Database write failed: ' + res.status);
-      return;
+      return true;
     }catch(e){
       console.error('Could not save item (attempt ' + attempt + ')', e);
       if(attempt < maxAttempts) await new Promise(r => setTimeout(r, 500 * attempt));
     }
   }
+  return false;
 }
 
 /* Delete one item's own node entirely (used for discontinued items). */
@@ -467,7 +467,11 @@ async function saveSheet(name){
   if(document.getElementById('summaryView').style.display !== 'none') renderSummary();
 
   // Save quietly in the background — just this one item, not the whole list.
-  saveItem(item);
+  // If it never lands after all retries, the PA needs to know their update
+  // was NOT actually shared, or they'll assume it was.
+  saveItem(item).then(ok => {
+    if(!ok) showToast('Could not save — check your connection and try again');
+  });
 }
 
 /* ---------- Who is updating (session only) ---------- */
@@ -714,7 +718,9 @@ function openAddSheet(){
     closeSheet();
     renderChips();
     renderList();
-    saveItem(newItem);
+    saveItem(newItem).then(ok => {
+      if(!ok) showToast('Could not save — check your connection and try again');
+    });
   };
 }
 
