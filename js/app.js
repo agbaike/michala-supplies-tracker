@@ -68,7 +68,12 @@ let currentName = null;
    item it actually changed, so it can't accidentally erase someone
    else's edit to a *different* item made moments earlier. */
 
-let saveInFlight = null;
+/* Tracks EVERY save currently in flight, not just the most recent one.
+   A structural save (whole-list migration/patch) and a routine per-item
+   save can overlap; if we only remembered the latest one, a read that
+   starts in between could land before the other write finishes and pull
+   back stale data. */
+let pendingSaves = new Set();
 
 function itemsArrayToObject(arr){
   const obj = {};
@@ -81,7 +86,7 @@ function objectToItemsArray(obj){
 }
 
 async function loadItems(){
-  if(saveInFlight) await saveInFlight; // never read while a save is still landing
+  if(pendingSaves.size) await Promise.all(pendingSaves); // never read while any save is still landing
 
   try{
     const res = await fetch(FIREBASE_DB_URL + '/' + DB_PATH + '.json?_=' + Date.now(), { cache: 'no-store' });
@@ -187,8 +192,8 @@ function showToast(msg){
    so two devices editing two different items can never collide. */
 function saveItem(item){
   const task = doSaveItem(item);
-  saveInFlight = task;
-  task.finally(() => { if(saveInFlight === task) saveInFlight = null; });
+  pendingSaves.add(task);
+  task.finally(() => pendingSaves.delete(task));
   return task;
 }
 
@@ -228,8 +233,8 @@ async function deleteItemRemote(id){
    or removed items. Never used for routine day-to-day quantity edits. */
 function saveAllItems(){
   const task = doSaveAll();
-  saveInFlight = task;
-  task.finally(() => { if(saveInFlight === task) saveInFlight = null; });
+  pendingSaves.add(task);
+  task.finally(() => pendingSaves.delete(task));
   return task;
 }
 
