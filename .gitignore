@@ -1,0 +1,7 @@
+# Real Firebase config (contains the live database URL) — never commit this
+config/firebase.config.js
+
+# OS and editor noise
+.DS_Store
+Thumbs.db
+.vscode/

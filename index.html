@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>Michala's Home Supplies</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="css/styles.css">
+</head>
+<body>
+
+<div class="topbar">
+  <div class="eyebrow">Care Supplies Tracker</div>
+  <h1>Michala's Home Supplies</h1>
+  <div class="sub">Berlin&#8211;Wilmersdorf &middot; tap an item to update stock</div>
+  <div class="meta-row">
+    <button class="who-chip" id="whoChip">Signed in as: &mdash;</button>
+  </div>
+</div>
+
+<div class="maintabs">
+  <button class="maintab active" data-tab="inventory">Inventory</button>
+  <button class="maintab" data-tab="summary">Today's Report</button>
+</div>
+
+<div id="inventoryView">
+  <div class="chiprow" id="chipRow"></div>
+  <div class="list" id="listWrap">
+    <div class="loading-wrap">Loading the shelf&hellip;</div>
+  </div>
+</div>
+
+<div id="summaryView" style="display:none;">
+  <div class="summary-wrap" id="summaryWrap"></div>
+</div>
+
+<button class="add-fab" id="addFab" title="Add a new item">+</button>
+
+<div class="bottomnav">
+  <button class="navbtn active" data-tab="inventory">
+    <div class="navdot">&#9635;</div>
+    Inventory
+  </button>
+  <button class="navbtn" data-tab="summary">
+    <div class="navdot">&#9873;</div>
+    Report
+  </button>
+</div>
+
+<div class="overlay" id="overlay">
+  <div class="sheet" id="sheet"></div>
+</div>
+
+<div class="copy-toast" id="copyToast">Shopping list copied</div>
+
+<!-- Config must load before app.js, since app.js reads FIREBASE_DB_URL and DB_PATH from it -->
+<script src="config/firebase.config.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
