@@ -129,8 +129,18 @@ function patchKnownItems(loadedItems){
   return {items: result, changed};
 }
 
+/* Quiet, non-blocking notification, used instead of alert() so nothing ever interrupts
+   a PA mid-task. */
+function showToast(msg){
+  const toast = document.getElementById('copyToast');
+  if(!toast) return;
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2200);
+}
+
 async function saveItems(){
-  const maxAttempts = 3;
+  const maxAttempts = 5;
   for(let attempt = 1; attempt <= maxAttempts; attempt++){
     try{
       const res = await fetch(FIREBASE_DB_URL + '/' + DB_PATH + '.json', {
@@ -143,9 +153,11 @@ async function saveItems(){
     }catch(e){
       console.error('Could not save inventory (attempt ' + attempt + ')', e);
       if(attempt < maxAttempts){
-        await new Promise(r => setTimeout(r, 600 * attempt));
+        await new Promise(r => setTimeout(r, 500 * attempt));
       } else {
-        alert('Could not save just now. Please check your connection and try again.');
+        // Quiet, non-blocking notice only, since a brief network hiccup usually
+        // resolves itself on the next save or the next background sync.
+        showToast('Having trouble saving, will keep trying quietly');
       }
     }
   }
@@ -466,13 +478,6 @@ function renderSummary(){
       lines.push('');
     });
     return lines.join('\n');
-  }
-
-  function showToast(msg){
-    const toast = document.getElementById('copyToast');
-    toast.textContent = msg;
-    toast.classList.add('show');
-    setTimeout(() => toast.classList.remove('show'), 2200);
   }
 
   function fallbackCopy(text){
