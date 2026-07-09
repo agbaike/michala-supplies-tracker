@@ -3,7 +3,7 @@
 A mobile-friendly, shared inventory tracker built for a home care team to log daily
 supply counts and generate a restock report, with no login required to use it.
 
-Live demo: _add your GitHub Pages link here once deployed_
+Live demo: https://agbaike.github.io/michala-supplies-tracker/
 
 ![Inventory view](screenshots/Screenshot%202026-07-09%20172655.png)
 
@@ -53,19 +53,27 @@ Live demo: _add your GitHub Pages link here once deployed_
 5. Deploy the whole folder to any static host (GitHub Pages, Azure Static
    Web Apps, Netlify, etc.) to get a permanent link to share.
 
+## Deploying an update
+
+Browsers (especially on phones) can keep an old cached copy of styles.css
+and app.js even after you've pushed a fix. To make sure everyone actually
+gets the new version, bump the ?v=2 query string on both <link>/<script>
+tags in index.html every time you deploy a change, e.g. ?v=3, ?v=4, and
+so on.
+
 ## A note on data security
 
 This is a client-only static site with no backend server, so the Firebase
 database URL is necessarily visible to anyone who views the page's source,
-regardless of `.gitignore` that's just how static sites work. The
-`.gitignore` entry keeps the real URL out of the git history and off public
+regardless of .gitignore, since that's just how static sites work. The
+.gitignore entry keeps the real URL out of the git history and off public
 repository browsing, which is good practice, but it is not a substitute for
 real access control.
 
 By default the Firebase Realtime Database rules in this project are set to
 open read/write, which is a reasonable starting point for a small, trusted
 team. If this ever needs to be locked down further, Firebase supports
-authentication and per-user security rules, that would be the next step.
+authentication and per-user security rules, and that would be the next step to take.
 
 ## License
 

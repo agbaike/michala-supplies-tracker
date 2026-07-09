@@ -63,7 +63,7 @@ let currentName = null;
 /* ---------- Storage helpers (self-hosted, no Claude dependency) ---------- */
 async function loadItems(){
   try{
-    const res = await fetch(FIREBASE_DB_URL + '/' + DB_PATH + '.json');
+    const res = await fetch(FIREBASE_DB_URL + '/' + DB_PATH + '.json?_=' + Date.now(), { cache: 'no-store' });
     if(!res.ok) throw new Error('Database request failed: ' + res.status);
     const data = await res.json();
     if(data){
@@ -146,7 +146,8 @@ async function saveItems(){
       const res = await fetch(FIREBASE_DB_URL + '/' + DB_PATH + '.json', {
         method: 'PUT',
         headers: {'Content-Type':'application/json'},
-        body: JSON.stringify(items)
+        body: JSON.stringify(items),
+        cache: 'no-store'
       });
       if(!res.ok) throw new Error('Database write failed: ' + res.status);
       return;
@@ -154,11 +155,9 @@ async function saveItems(){
       console.error('Could not save inventory (attempt ' + attempt + ')', e);
       if(attempt < maxAttempts){
         await new Promise(r => setTimeout(r, 500 * attempt));
-      } else {
-        // Quiet, non-blocking notice only, since a brief network hiccup usually
-        // resolves itself on the next save or the next background sync.
-        showToast('Having trouble saving, will keep trying quietly');
       }
+      // No message shown even after all attempts fail; the next background
+      // sync or the next edit will quietly try saving again.
     }
   }
 }
@@ -366,21 +365,48 @@ async function saveSheet(name){
   item.updatedAt = Date.now();
   item.updatedBy = getWho();
 
-  await saveItems();
+  // Update the screen immediately, don't make the PA wait for the network.
   closeSheet();
   renderList();
   if(document.getElementById('summaryView').style.display !== 'none') renderSummary();
+
+  // Save quietly in the background.
+  saveItems();
 }
 
 /* ---------- Who is updating (session only) ---------- */
 let whoName = '';
 function getWho(){ return whoName || 'A carer'; }
 function askWho(){
-  const val = prompt('Your first name, so we know who logged this update:', whoName);
-  if(val && val.trim()){
-    whoName = val.trim();
-    document.getElementById('whoChip').textContent = 'Signed in as: ' + whoName;
-  }
+  const overlay = document.getElementById('overlay');
+  const sheet = document.getElementById('sheet');
+  sheet.innerHTML = `
+    <div class="sheet-handle"></div>
+    <h3>Who's updating?</h3>
+    <div class="sheet-sub">Just your first name, so updates show who logged them</div>
+    <div class="field-row">
+      <div class="field"><input type="text" id="whoInput" placeholder="Your first name" value="${whoName}"></div>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn secondary" id="btnCancelWho">Cancel</button>
+      <button class="btn primary" id="btnSaveWho">Save</button>
+    </div>
+  `;
+  overlay.classList.add('show');
+  const input = document.getElementById('whoInput');
+  input.focus();
+  document.getElementById('btnCancelWho').onclick = closeSheet;
+  overlay.onclick = (e) => { if(e.target === overlay) closeSheet(); };
+  const save = () => {
+    const val = input.value.trim();
+    if(val){
+      whoName = val;
+      document.getElementById('whoChip').textContent = 'Signed in as: ' + whoName;
+    }
+    closeSheet();
+  };
+  document.getElementById('btnSaveWho').onclick = save;
+  input.addEventListener('keydown', (e) => { if(e.key === 'Enter') save(); });
 }
 
 /* ---------- Summary tab ---------- */
@@ -548,6 +574,7 @@ function openAddSheet(){
     <div class="field-row">
       <div class="field"><label>Item name</label><input type="text" id="newName" placeholder="e.g. Cotton Wool"></div>
     </div>
+    <div id="newNameError" style="display:none;color:var(--urgent);font-size:12.5px;margin:-8px 0 12px;">Please give the item a name.</div>
     <div class="field-row">
       <div class="field"><label>Category</label><input type="text" id="newCategory" placeholder="e.g. Medical / Care"></div>
     </div>
@@ -567,27 +594,35 @@ function openAddSheet(){
   overlay.classList.add('show');
   document.getElementById('btnCancelAdd').onclick = closeSheet;
   overlay.onclick = (e) => { if(e.target === overlay) closeSheet(); };
-  document.getElementById('btnSaveAdd').onclick = async () => {
-    const name = document.getElementById('newName').value.trim();
+  document.getElementById('btnSaveAdd').onclick = () => {
+    const nameField = document.getElementById('newName');
+    const name = nameField.value.trim();
     const category = document.getElementById('newCategory').value.trim() || 'Other';
     const unit = document.getElementById('newUnit').value.trim() || 'pieces';
     const qty = parseInt(document.getElementById('newQty').value) || 0;
     const min = parseInt(document.getElementById('newMin').value) || 0;
-    if(!name){ alert('Please give the item a name.'); return; }
+    if(!name){
+      document.getElementById('newNameError').style.display = 'block';
+      nameField.style.borderColor = 'var(--urgent)';
+      nameField.focus();
+      return;
+    }
     items.push({
       id: name.toLowerCase().replace(/[^a-z0-9]+/g,'-'),
       name, category, unitLabel: unit, mode:'simple',
       qty, min, critical:false, note:'', updatedAt: Date.now(), updatedBy: getWho()
     });
-    await saveItems();
+
+    // Update the screen immediately, save in the background.
     closeSheet();
     renderChips();
     renderList();
+    saveItems();
   };
 }
 
 /* ---------- Tabs ---------- */
-async function switchTab(tab){
+function switchTab(tab){
   document.querySelectorAll('.maintab, .navbtn').forEach(b => {
     b.classList.toggle('active', b.dataset.tab === tab);
   });
@@ -595,10 +630,25 @@ async function switchTab(tab){
   document.getElementById('summaryView').style.display = tab === 'summary' ? 'block' : 'none';
   document.getElementById('addFab').style.display = tab === 'inventory' ? 'flex' : 'none';
 
-  await loadItems();
+  // Show what we already have instantly, don't make the PA wait on the network
+  // just to switch tabs.
   renderChips();
   renderList();
   if(tab === 'summary') renderSummary();
+
+  // Then quietly check for anything newer in the background.
+  refreshQuietly();
+}
+
+async function refreshQuietly(){
+  const before = JSON.stringify(items);
+  await loadItems();
+  const after = JSON.stringify(items);
+  if(before !== after){
+    renderChips();
+    renderList();
+    if(document.getElementById('summaryView').style.display !== 'none') renderSummary();
+  }
 }
 
 /* ---------- Init ---------- */
@@ -620,17 +670,10 @@ async function init(){
    page open still sees fresh numbers without needing to tap anything. Skips refreshing
    while someone is actively typing in a sheet, so it never interrupts an update in progress. */
 function startBackgroundSync(){
-  setInterval(async () => {
+  setInterval(() => {
     const overlayOpen = document.getElementById('overlay').classList.contains('show');
     if(overlayOpen) return;
-    const before = JSON.stringify(items);
-    await loadItems();
-    const after = JSON.stringify(items);
-    if(before !== after){
-      renderChips();
-      renderList();
-      if(document.getElementById('summaryView').style.display !== 'none') renderSummary();
-    }
+    refreshQuietly();
   }, 15000);
 }
 
